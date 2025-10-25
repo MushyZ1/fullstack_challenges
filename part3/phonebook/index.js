@@ -1,69 +1,143 @@
+require("dotenv").config();
 const express = require("express");
 const morgan = require("morgan");
 const cors = require("cors");
-const path = require("path");
+const mongoose = require("mongoose");
+
 const app = express();
+
+mongoose.set("strictQuery", false);
+const url = process.env.MONGODB_URI;
+mongoose
+  .connect(url)
+  .then(() => console.log("Connected to MongoDB"))
+  .catch((err) => console.log("Error connecting to MongoDB:", err.message));
+
+const personSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: [true, "Name required!"],
+    minlength: [3, "Name must be at least 3 chars dawg!"],
+  },
+  telephoneNo: {
+    type: String,
+    minLength: [8, "Number must be 8 numbers or more"],
+    validate: {
+      validator: (v) => {
+        return /^\d{2,3}-\d+$/.test(v);
+      },
+      message: (props) => `${props.value} is not a valid phone number!`,
+    },
+    required: [true, "phone number required"],
+  },
+});
+
+personSchema.set("toJSON", {
+  transform: (doc, returnedObject) => {
+    returnedObject.id = returnedObject._id.toString();
+    delete returnedObject._id;
+    delete returnedObject.__v;
+  },
+});
+
+const Person = mongoose.model("Person", personSchema);
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static("dist"));
-
 morgan.token("body", (req) => JSON.stringify(req.body));
 app.use(morgan(":method :url :status :response-time ms - body: :body"));
 
-let persons = [
-  { id: "1", name: "Arto Hellas", number: "040-123456" },
-  { id: "2", name: "Ada Lovelace", number: "39-44-5323523" },
-  { id: "3", name: "Dan Abramov", number: "12-43-234345" },
-  { id: "4", name: "Mary Poppendieck", number: "39-23-6423122" },
-];
-
-const generateId = () => Math.floor(Math.random() * 1000000).toString();
-
-app.get("/api/persons", (req, res) => res.json(persons));
-
-app.get("/info", (req, res) => {
-  const count = persons.length;
-  const date = new Date();
-  res.send(`<p>Phonebook has info for ${count} people</p><p>${date}</p>`);
+app.get("/api/persons", (req, res, next) => {
+  Person.find({})
+    .then((persons) => res.json(persons))
+    .catch((err) => next(err));
 });
 
-app.get("/api/persons/:id", (req, res) => {
-  const person = persons.find((p) => p.id === req.params.id);
-  person ? res.json(person) : res.status(404).end();
+app.get("/api/persons/:id", (req, res, next) => {
+  const id = req.params.id;
+
+  Person.findById(id)
+    .then((person) => {
+      if (person) {
+        res.json(person);
+      } else {
+        res.status(404).end();
+      }
+    })
+    .catch((error) => next(error));
 });
 
-app.delete("/api/persons/:id", (req, res) => {
-  persons = persons.filter((p) => p.id !== req.params.id);
-  res.status(204).end();
+app.get("/info", (req, res, next) => {
+  Person.countDocuments({})
+    .then((count) => {
+      const date = new Date();
+      res.send(`<p>Phonebook has info for ${count} people</p><p>${date}</p>`);
+    })
+    .catch((error) => next(error));
 });
 
-app.post("/api/persons", (req, res) => {
-  const body = req.body;
-  console.log("Received body:", body);
+app.post("/api/persons", (req, res, next) => {
+  const { name, telephoneNo } = req.body;
 
-  if (!body.name || (!body.number && !body.telephoneNo)) {
+  if (!name || !telephoneNo) {
     return res.status(400).json({ error: "name or number missing" });
   }
 
-  const number = body.number || body.telephoneNo;
+  Person.findOne({ name })
+    .then((existingPerson) => {
+      if (existingPerson) {
+        existingPerson.telephoneNo = telephoneNo;
+        return existingPerson
+          .save()
+          .then((updatedPerson) => res.json(updatedPerson))
+          .catch((error) => next(error));
+      }
 
-  const nameExists = persons.find(
-    (p) => p.name.toLowerCase() === body.name.toLowerCase()
-  );
-  if (nameExists) {
-    return res.status(400).json({ error: "name must be unique" });
+      const person = new Person({ name, telephoneNo });
+      return person
+        .save()
+        .then((savedPerson) => res.json(savedPerson))
+        .catch((error) => next(error));
+    })
+    .catch((err) => next(err));
+});
+
+app.delete("/api/persons/:id", (req, res, next) => {
+  Person.findByIdAndDelete(req.params.id)
+    .then(() => res.status(204).end())
+    .catch((err) => next(err));
+});
+
+app.put("/api/persons/:id", (req, res, next) => {
+  const { name, telephoneNo } = req.body;
+  Person.findById(req.params.id)
+    .then((person) => {
+      if (!person) return res.status(404).end();
+      person.name = name;
+      person.telephoneNo = telephoneNo;
+      return person.save().then((updated) => res.json(updated));
+    })
+    .catch((err) => next(err));
+});
+
+const unknownEndpoint = (req, res) =>
+  res.status(404).send({ error: "unknown endpoint" });
+app.use(unknownEndpoint);
+
+const errorHandler = (error, req, res, next) => {
+  console.error(error.message);
+
+  if (error.name === "CastError")
+    return res.status(400).send({ error: "malformatted id" });
+  if (error.name === "ValidationError") {
+    console.error("Validation failed:", error.message);
+    return res.status(400).json({ error: error.message });
   }
 
-  const person = { id: generateId(), name: body.name, number };
-  persons = persons.concat(person);
-  res.json(person);
-});
-
-// fallback for SPA — serve index.html for any unknown GET route
-app.use((req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "index.html"));
-});
+  next(error);
+};
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
