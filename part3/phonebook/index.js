@@ -1,10 +1,12 @@
 const express = require("express");
 const morgan = require("morgan");
 const cors = require("cors");
+const path = require("path");
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static("dist"));
 
 morgan.token("body", (req) => JSON.stringify(req.body));
 app.use(morgan(":method :url :status :response-time ms - body: :body"));
@@ -56,6 +58,11 @@ app.post("/api/persons", (req, res) => {
   const person = { id: generateId(), name: body.name, number };
   persons = persons.concat(person);
   res.json(person);
+});
+
+// fallback for SPA — serve index.html for any unknown GET route
+app.use((req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 const PORT = process.env.PORT || 3001;
