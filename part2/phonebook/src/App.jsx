@@ -70,18 +70,29 @@ const App = () => {
           });
       }
     } else {
-      personService.create(newPerson).then((data) => {
-        setPersons(persons.concat(data));
-        setNewName("");
-        setNewTelephoneNo("");
-        setNotifMessage({
-          message: `${data.name} has been added!`,
-          isError: false,
+      personService
+        .create(newPerson)
+        .then((data) => {
+          setPersons(persons.concat(data));
+          setNewName("");
+          setNewTelephoneNo("");
+          setNotifMessage({
+            message: `${data.name} has been added!`,
+            isError: false,
+          });
+          setTimeout(() => {
+            setNotifMessage({ message: null, isError: false });
+          }, 5000);
+        })
+        .catch((error) => {
+          setNotifMessage({
+            message: error.response.data.error,
+            isError: true,
+          });
+          setTimeout(() => {
+            setNotifMessage({ message: null, isError: false });
+          }, 5000);
         });
-        setTimeout(() => {
-          setNotifMessage({ message: null, isError: false });
-        }, 5000);
-      });
     }
   };
 
